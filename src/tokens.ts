@@ -6,13 +6,53 @@ import { ISignal } from '@lumino/signaling';
  * The WebSocket message protocol, mirrored from the Python dataclasses in
  * `jupyterlab_live_content/ws_schema.py`.
  *
- * client -> server: `client_opened`, `client_closed`
- * server -> client: `server_update`
+ * client -> server: `client_opened`, `client_closed`, `get_manifest`, `fetch_cells`
+ * server -> client: `server_update`, `nb_manifest`, `nb_update`
  */
+export interface ICellInfo {
+  id: string;
+  cell_type: string;
+  source_hash: string;
+  meta_hash: string;
+}
+
+export interface ICellUpdateInfo extends ICellInfo {
+  source: string;
+  metadata: Record<string, any>;
+  attachments: Record<string, any>;
+}
+
+export interface INbManifest {
+  type: 'nb_manifest';
+  path: string;
+  cell_order: string[];
+  cells_by_id: Record<string, ICellInfo>;
+  nb_meta_hash: string;
+  last_modified: string | null;
+  hash: string | null;
+  hash_algorithm: string | null;
+}
+
+export interface INbUpdate {
+  type: 'nb_update';
+  path: string;
+  cell_order: string[];
+  cells_by_id: Record<string, ICellUpdateInfo>;
+  nb_meta_hash: string;
+  nb_metadata: Record<string, any>;
+  last_modified: string | null;
+  hash: string | null;
+  hash_algorithm: string | null;
+}
+
 export type LiveContentMessage =
   | { type: 'client_opened'; path: string }
   | { type: 'client_closed'; path: string }
-  | { type: 'server_update'; path: string };
+  | { type: 'get_manifest'; path: string }
+  | { type: 'fetch_cells'; path: string; ids: string[] }
+  | { type: 'server_update'; path: string }
+  | INbManifest
+  | INbUpdate;
 
 /**
  * The transport plugin. Owns the single WebSocket connection to the

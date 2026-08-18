@@ -10,6 +10,7 @@ import {
 import { IDocumentWidget } from '@jupyterlab/docregistry';
 
 import { LiveContentConnector } from './connector';
+import { NotebookLiveSync } from './nbApplier';
 import { LiveDocumentRegistry } from './registry';
 import { ILiveContentConnector, ILiveDocumentRegistry } from './tokens';
 
@@ -148,10 +149,70 @@ const applierPlugin: JupyterFrontEndPlugin<void> = {
   }
 };
 
+/**
+ * Plugin 4 - the notebook live-sync.
+ *
+ * Requires the connector and the registry. For each open notebook it maintains a
+ * `NotebookLiveSync` that applies incremental `nb_update` messages to the shared
+ * `YNotebook` (see `nbApplier.ts`), rather than the coarse `context.revert()`
+ * path used for other document types.
+ */
+const notebookSyncPlugin: JupyterFrontEndPlugin<void> = {
+  id: `${PLUGIN_NAMESPACE}:notebook-sync`,
+  description: 'Applies incremental notebook updates to the shared model.',
+  autoStart: true,
+  requires: [ILiveContentConnector, ILiveDocumentRegistry],
+  activate: (
+    app: JupyterFrontEnd,
+    connector: ILiveContentConnector,
+    registry: ILiveDocumentRegistry
+  ): void => {
+    const syncs = new Map<string, NotebookLiveSync>();
+
+    const isNotebookWidget = (widget: IDocumentWidget): boolean => {
+      const shared = (widget.context.model as any).sharedModel;
+      return !!shared && Array.isArray(shared.cells);
+    };
+
+    const getOrCreate = (path: string): NotebookLiveSync | undefined => {
+      const existing = syncs.get(path);
+      if (existing) {
+        return existing;
+      }
+      const widget = registry.get(path);
+      if (!widget || !isNotebookWidget(widget)) {
+        return undefined;
+      }
+      const sync = new NotebookLiveSync(widget);
+      syncs.set(path, sync);
+      return sync;
+    };
+
+    registry.closed.connect((_, path) => {
+      const sync = syncs.get(path);
+      if (sync) {
+        sync.dispose();
+        syncs.delete(path);
+      }
+    });
+
+    connector.messageReceived.connect((_, message) => {
+      if (message.type === 'nb_manifest') {
+        getOrCreate(message.path)?.onManifest(message);
+      } else if (message.type === 'nb_update') {
+        void getOrCreate(message.path)?.onUpdate(message);
+      }
+    });
+
+    console.log(`${PLUGIN_NAMESPACE}:notebook-sync is activated`);
+  }
+};
+
 const plugins: JupyterFrontEndPlugin<any>[] = [
   connectorPlugin,
   trackerPlugin,
-  applierPlugin
+  applierPlugin,
+  notebookSyncPlugin
 ];
 
 export default plugins;
