@@ -7,6 +7,18 @@ import { ICellHashes } from './reconcile';
 import { clientHasRevision } from './revision';
 import { INbManifest, INbUpdate } from './tokens';
 
+interface INbCellSnapshot {
+  cell_type: string;
+  source: string;
+  metadata: any;
+}
+
+interface INbSnapshot {
+  cellOrder: string[];
+  cellsById: Record<string, INbCellSnapshot>;
+  nbMetadata: any;
+}
+
 /**
  * Drives incremental sync for a single open notebook.
  *
@@ -34,6 +46,11 @@ export class NotebookLiveSync {
       this._onStateChanged,
       this
     );
+  }
+
+  /** Whether the bound notebook widget has been disposed. */
+  get isDisposed(): boolean {
+    return this._widget.isDisposed;
   }
 
   /** Establish the baseline hashes from a full manifest. */
@@ -83,12 +100,11 @@ export class NotebookLiveSync {
       return;
     }
 
-    // Checkpoint first so the user can roll back to the pre-update state.
-    try {
-      await this._widget.context.createCheckpoint();
-    } catch {
-      /* read-only or unsupported: proceed without a rollback point */
-    }
+    // Snapshot the current model content BEFORE applying, so "Revert" can undo
+    // the change. A ContentsManager checkpoint would be useless here: the agent
+    // has already written the new content to disk, so a disk checkpoint captures
+    // the post-change state, not the state we want to roll back to.
+    const snapshot = this._captureSnapshot();
 
     this._applying = true;
     try {
@@ -145,7 +161,7 @@ export class NotebookLiveSync {
     this._nbMetaHash = msg.nb_meta_hash;
 
     this._advanceRecordedRevision(msg);
-    this._notifyApplied();
+    this._notifyApplied(snapshot);
   }
 
   /**
@@ -172,26 +188,92 @@ export class NotebookLiveSync {
     }
   }
 
-  private _notifyApplied(): void {
-    Notification.info('Applied changes from disk', {
-      autoClose: 4000,
+  private _notifyApplied(snapshot: INbSnapshot): void {
+    if (this._lastNotification) {
+      Notification.dismiss(this._lastNotification);
+    }
+    this._lastNotification = Notification.info('Applied changes from disk', {
+      autoClose: false,
       actions: [
         {
           label: 'Revert',
           callback: () => {
-            void this._revertToCheckpoint();
+            this._restore(snapshot);
+            if (this._lastNotification) {
+              Notification.dismiss(this._lastNotification);
+              this._lastNotification = null;
+            }
           }
         }
       ]
     });
   }
 
-  private async _revertToCheckpoint(): Promise<void> {
-    const ctx = this._widget.context;
-    const checkpoints = await ctx.listCheckpoints();
-    if (checkpoints.length) {
-      await ctx.restoreCheckpoint(checkpoints[checkpoints.length - 1].id);
-      await ctx.revert();
+  /** Capture the model's current content so a later apply can be undone. */
+  private _captureSnapshot(): INbSnapshot {
+    const cellOrder: string[] = [];
+    const cellsById: Record<string, INbCellSnapshot> = {};
+    for (const cell of this._model.cells) {
+      const id = cell.getId();
+      cellOrder.push(id);
+      cellsById[id] = {
+        cell_type: (cell as any).cell_type ?? 'code',
+        source: String(cell.getSource()),
+        metadata: cell.getMetadata()
+      };
+    }
+    return { cellOrder, cellsById, nbMetadata: this._model.getMetadata() };
+  }
+
+  /** Restore a previously captured snapshot into the shared model in place. */
+  private _restore(snap: INbSnapshot): void {
+    this._applying = true;
+    try {
+      this._model.transact(() => {
+        // Remove cells that are not in the snapshot.
+        for (const cell of [...this._model.cells]) {
+          if (!snap.cellsById[cell.getId()]) {
+            const idx = this._indexOfId(cell.getId());
+            if (idx >= 0) {
+              this._model.deleteCell(idx);
+            }
+          }
+        }
+        // Reorder and re-insert to match the snapshot order.
+        snap.cellOrder.forEach((id, target) => {
+          const curIdx = this._indexOfId(id);
+          const c = snap.cellsById[id];
+          if (curIdx === -1) {
+            this._model.insertCell(target, {
+              id,
+              cell_type: c.cell_type,
+              source: c.source,
+              metadata: c.metadata
+            } as any);
+          } else if (curIdx !== target) {
+            this._model.moveCell(curIdx, target);
+          }
+        });
+        // Restore source and metadata where they differ.
+        for (const id of snap.cellOrder) {
+          const cell = this._cellById(id);
+          const c = snap.cellsById[id];
+          if (!cell) {
+            continue;
+          }
+          if (String(cell.getSource()) !== c.source) {
+            cell.setSource(c.source);
+          }
+          if (
+            JSON.stringify(cell.getMetadata()) !== JSON.stringify(c.metadata)
+          ) {
+            cell.setMetadata(c.metadata as any);
+          }
+        }
+        this._model.setMetadata(snap.nbMetadata as any);
+      });
+    } finally {
+      this._applying = false;
     }
   }
 
@@ -257,4 +339,5 @@ export class NotebookLiveSync {
   private _dirty = new Set<string>();
   private _wired = new WeakSet<ISharedCell>();
   private _applying = false;
+  private _lastNotification: string | null = null;
 }

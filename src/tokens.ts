@@ -82,19 +82,24 @@ export const ILiveContentConnector = new Token<ILiveContentConnector>(
 
 /**
  * A registry of the document widgets currently open in this client, indexed by
- * their (server-relative) path. Maintained by the tracker plugin.
+ * their (server-relative) path. A single path can have several widgets (for
+ * example a notebook opened in both notebook view and text-editor view).
+ * Maintained by the tracker plugin.
  */
 export interface ILiveDocumentRegistry {
-  /** Look up the open document widget for a path, if any. */
+  /** The first open widget for a path, if any. */
   get(path: string): IDocumentWidget | undefined;
 
-  /** All currently open document widgets, indexed by path. */
-  readonly widgets: ReadonlyMap<string, IDocumentWidget>;
+  /** All open widgets for a path (notebook view, text view, ...). */
+  all(path: string): IDocumentWidget[];
 
-  /** Emitted with the path when a document is added to the registry. */
+  /** Whether any widget is open for a path. */
+  has(path: string): boolean;
+
+  /** Emitted with the path when the first widget for it is added. */
   readonly opened: ISignal<ILiveDocumentRegistry, string>;
 
-  /** Emitted with the path when a document is removed from the registry. */
+  /** Emitted with the path when the last widget for it is removed. */
   readonly closed: ISignal<ILiveDocumentRegistry, string>;
 }
 

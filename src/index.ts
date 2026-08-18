@@ -10,9 +10,9 @@ import {
 import { IDocumentWidget } from '@jupyterlab/docregistry';
 
 import { LiveContentConnector } from './connector';
+import { coarseRevert } from './coarse';
 import { NotebookLiveSync } from './nbApplier';
 import { LiveDocumentRegistry } from './registry';
-import { clientHasRevision } from './revision';
 import { ILiveContentConnector, ILiveDocumentRegistry } from './tokens';
 
 export { ILiveContentConnector, ILiveDocumentRegistry } from './tokens';
@@ -64,8 +64,13 @@ const trackerPlugin: JupyterFrontEndPlugin<ILiveDocumentRegistry> = {
     docManager: IDocumentManager | null
   ): ILiveDocumentRegistry => {
     const registry = new LiveDocumentRegistry();
+    const tracked = new WeakSet<IDocumentWidget>();
 
     const track = (widget: IDocumentWidget): void => {
+      if (tracked.has(widget)) {
+        return;
+      }
+      tracked.add(widget);
       const context = widget.context;
       let path = context.path;
 
@@ -77,7 +82,7 @@ const trackerPlugin: JupyterFrontEndPlugin<ILiveDocumentRegistry> = {
         if (newPath === path) {
           return;
         }
-        registry.remove(path);
+        registry.remove(path, widget);
         connector.sendMessage({ type: 'client_closed', path });
         path = newPath;
         registry.add(path, widget);
@@ -85,19 +90,20 @@ const trackerPlugin: JupyterFrontEndPlugin<ILiveDocumentRegistry> = {
       });
 
       widget.disposed.connect(() => {
-        registry.remove(path);
+        registry.remove(path, widget);
         connector.sendMessage({ type: 'client_closed', path });
       });
     };
 
-    // New opens (any file type - notebooks, text, images, ...).
+    // New opens (any file type - notebooks, text, images, ...). The same file
+    // can be opened in multiple views; each is tracked separately.
     opener.opened.connect((_, widget: IDocumentWidget) => track(widget));
 
     // Startup sweep: pick up documents already restored into the shell.
     if (labShell) {
       for (const widget of labShell.widgets('main')) {
         const context = docManager?.contextForWidget(widget);
-        if (context && !registry.widgets.has(context.path)) {
+        if (context) {
           track(widget as IDocumentWidget);
         }
       }
@@ -131,24 +137,9 @@ const applierPlugin: JupyterFrontEndPlugin<void> = {
       if (message.type !== 'server_update') {
         return;
       }
-      const widget = registry.get(message.path);
-      if (!widget) {
-        return;
+      for (const widget of registry.all(message.path)) {
+        coarseRevert(widget, message);
       }
-      const context = widget.context;
-      // A client's own save echoes back as a change event. If we already hold
-      // this revision (matching hash), there is nothing to reload.
-      if (clientHasRevision(context, message)) {
-        return;
-      }
-      if (context.model.dirty) {
-        // Unsaved local changes: don't clobber them. The native save-conflict
-        // dialog will surface the divergence when the user next saves.
-        return;
-      }
-      context.revert().catch(err => {
-        console.error(`live-content: failed to revert ${message.path}`, err);
-      });
     });
 
     console.log(`${PLUGIN_NAMESPACE}:applier is activated`);
@@ -182,11 +173,16 @@ const notebookSyncPlugin: JupyterFrontEndPlugin<void> = {
 
     const getOrCreate = (path: string): NotebookLiveSync | undefined => {
       const existing = syncs.get(path);
-      if (existing) {
+      if (existing && !existing.isDisposed) {
         return existing;
       }
-      const widget = registry.get(path);
-      if (!widget || !isNotebookWidget(widget)) {
+      if (existing) {
+        syncs.delete(path);
+      }
+      // A path can have several views (notebook + text editor). Bind the sync to
+      // the notebook view; text views are handled by the coarse revert path.
+      const widget = registry.all(path).find(isNotebookWidget);
+      if (!widget) {
         return undefined;
       }
       const sync = new NotebookLiveSync(widget);
@@ -206,7 +202,15 @@ const notebookSyncPlugin: JupyterFrontEndPlugin<void> = {
       if (message.type === 'nb_manifest') {
         getOrCreate(message.path)?.onManifest(message);
       } else if (message.type === 'nb_update') {
+        // Incrementally update the notebook view's shared model...
         void getOrCreate(message.path)?.onUpdate(message);
+        // ...and coarsely reload any text-editor views of the same file, which
+        // we do not diff per cell.
+        for (const widget of registry.all(message.path)) {
+          if (!isNotebookWidget(widget)) {
+            coarseRevert(widget, message);
+          }
+        }
       }
     });
 
