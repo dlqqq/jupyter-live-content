@@ -65,7 +65,7 @@ local change. The server computes the set of per-cell hashes on each out-of-band
 change and sends that set, together with the order of the cell ids, to the client.
 
 The client uses the cell-id list and the hashes to determine whether the update
-is *reconcilable*, and applies it if so. To minimize document updates, the client
+is _reconcilable_, and applies it if so. To minimize document updates, the client
 runs the Myers diff algorithm over its current cell-id list and the server's
 proposed cell-id list to find their longest common subsequence (LCS). The cells
 in the LCS stay in place, and only the remaining cells are moved, inserted, or
@@ -225,15 +225,15 @@ means the notebook's own metadata (for example the selected kernel, which the us
 can change locally) differs from its base hash. An update is reconcilable when every
 one of its operations is:
 
-| Operation on a cell | Reconcilable when |
-|---|---|
-| Insert a new cell | Always. Nothing local to lose. |
-| Source update to a surviving cell | Not `src-dirty` and not `busy`. |
-| Metadata update to a surviving cell | Not `meta-dirty` and not `busy`. |
-| Move a surviving cell | Not `src-dirty`, not `meta-dirty`, not `busy`. |
-| `cell_type` change | Not `src-dirty`, not `meta-dirty`, not `busy`. Replaces the cell. |
-| Delete a cell | Not `src-dirty`, not `meta-dirty`, not `busy`. |
-| Notebook-level metadata change | Not `nb-meta-dirty`. |
+| Operation on a cell                 | Reconcilable when                                                 |
+| ----------------------------------- | ----------------------------------------------------------------- |
+| Insert a new cell                   | Always. Nothing local to lose.                                    |
+| Source update to a surviving cell   | Not `src-dirty` and not `busy`.                                   |
+| Metadata update to a surviving cell | Not `meta-dirty` and not `busy`.                                  |
+| Move a surviving cell               | Not `src-dirty`, not `meta-dirty`, not `busy`.                    |
+| `cell_type` change                  | Not `src-dirty`, not `meta-dirty`, not `busy`. Replaces the cell. |
+| Delete a cell                       | Not `src-dirty`, not `meta-dirty`, not `busy`.                    |
+| Notebook-level metadata change      | Not `nb-meta-dirty`.                                              |
 
 **How the reconcile runs.** The client keeps, per cell id, the server's last-sent
 hashes (`base`) and its live hashes (`current`), the latter maintained by a Web
