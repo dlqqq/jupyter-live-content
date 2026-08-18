@@ -12,6 +12,7 @@ import { IDocumentWidget } from '@jupyterlab/docregistry';
 import { LiveContentConnector } from './connector';
 import { NotebookLiveSync } from './nbApplier';
 import { LiveDocumentRegistry } from './registry';
+import { clientHasRevision } from './revision';
 import { ILiveContentConnector, ILiveDocumentRegistry } from './tokens';
 
 export { ILiveContentConnector, ILiveDocumentRegistry } from './tokens';
@@ -135,6 +136,11 @@ const applierPlugin: JupyterFrontEndPlugin<void> = {
         return;
       }
       const context = widget.context;
+      // A client's own save echoes back as a change event. If we already hold
+      // this revision (matching hash), there is nothing to reload.
+      if (clientHasRevision(context, message)) {
+        return;
+      }
       if (context.model.dirty) {
         // Unsaved local changes: don't clobber them. The native save-conflict
         // dialog will surface the divergence when the user next saves.

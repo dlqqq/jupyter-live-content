@@ -115,11 +115,33 @@ class LiveContentManager:
 
     def broadcast_update(self, path: str) -> None:
         """Coarse ``server_update`` for non-notebook documents."""
+        asyncio.ensure_future(self._broadcast_server_update(path))
+
+    def _route(self, path: str, message: Any) -> None:
+        """Send a message to every client subscribed to ``path``."""
         subs = self._subscriptions.get(path)
         if not subs:
             return
         for client in list(subs):
-            self._send(client, ServerUpdate(path=path))
+            self._send(client, message)
+
+    async def _broadcast_server_update(self, path: str) -> None:
+        if not self._subscriptions.get(path):
+            return
+        revision = {"last_modified": None, "hash": None, "hash_algorithm": None}
+        if self.contents_manager is not None:
+            revision = await nb_service.read_file_revision(
+                self.contents_manager, path
+            )
+        self._route(
+            path,
+            ServerUpdate(
+                path=path,
+                last_modified=revision["last_modified"],
+                hash=revision["hash"],
+                hash_algorithm=revision["hash_algorithm"],
+            ),
+        )
 
     async def _send_manifest(
         self, client: "LiveContentWebSocketHandler", path: str
@@ -182,7 +204,7 @@ class LiveContentManager:
     async def _on_disk_change(self, path: str) -> None:
         """Dispatch a change to a subscribed path."""
         if not nb_service.is_notebook_path(path):
-            self.broadcast_update(path)
+            await self._broadcast_server_update(path)
             return
 
         result = await self._build_manifest(path)

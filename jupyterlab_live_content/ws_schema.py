@@ -53,10 +53,16 @@ class ClientClosed:
 class ServerUpdate:
     """Sent by the server when the file at ``path`` changed on disk.
 
-    This is the coarse fallback path, still used for non-notebook documents.
+    This is the coarse fallback path, still used for non-notebook documents. The
+    file-revision metadata lets a client tell its own save apart from a genuine
+    out-of-band change: if the hash matches what the client already recorded, the
+    update is a no-op and no reload is needed.
     """
 
     path: str
+    last_modified: Optional[str] = None
+    hash: Optional[str] = None
+    hash_algorithm: Optional[str] = None
     type: str = field(default=MSG_SERVER_UPDATE)
 
 

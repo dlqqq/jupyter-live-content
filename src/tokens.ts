@@ -50,7 +50,13 @@ export type LiveContentMessage =
   | { type: 'client_closed'; path: string }
   | { type: 'get_manifest'; path: string }
   | { type: 'fetch_cells'; path: string; ids: string[] }
-  | { type: 'server_update'; path: string }
+  | {
+      type: 'server_update';
+      path: string;
+      last_modified: string | null;
+      hash: string | null;
+      hash_algorithm: string | null;
+    }
   | INbManifest
   | INbUpdate;
 

@@ -4,6 +4,7 @@ import type { ISharedCell, ISharedNotebook } from '@jupyter/ydoc';
 
 import { planReconcile, IReconcileInput } from './reconcile';
 import { ICellHashes } from './reconcile';
+import { clientHasRevision } from './revision';
 import { INbManifest, INbUpdate } from './tokens';
 
 /**
@@ -50,6 +51,13 @@ export class NotebookLiveSync {
 
   /** Handle an incremental update from the server. */
   async onUpdate(msg: INbUpdate): Promise<void> {
+    // A client's own save echoes back as a change event. If we already hold this
+    // revision (matching hash), the update is a no-op: skip it entirely so no
+    // reload happens and no "applied changes" notification appears.
+    if (clientHasRevision(this._widget.context, msg)) {
+      return;
+    }
+
     const changed: Record<string, ICellHashes> = {};
     for (const [id, info] of Object.entries(msg.cells_by_id)) {
       changed[id] = {

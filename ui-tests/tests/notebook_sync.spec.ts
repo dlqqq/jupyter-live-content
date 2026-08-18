@@ -53,3 +53,27 @@ test('a changed cell updates in place without touching other cells', async ({
   await expect(editor.nth(0)).toContainText('first cell');
   expect(await page.notebook.getCellCount()).toBe(2);
 });
+
+test('a normal save does not show an "applied changes" popup', async ({
+  page,
+  tmpPath
+}) => {
+  const nbPath = `${tmpPath}/${NB_NAME}`;
+
+  await page.contents.uploadContent(notebook('x = 1'), 'text', nbPath);
+  await page.goto();
+  await page.notebook.openByPath(nbPath);
+
+  const editor = page.locator('.jp-Notebook .cm-content');
+  await expect(editor.nth(1)).toContainText('x = 1');
+
+  // Edit a cell locally, then save through JupyterLab (a ContentsManager write).
+  await page.notebook.setCell(1, 'code', 'x = 7');
+  await page.notebook.save();
+
+  // The server watcher sees this write and may echo an update back. Give it well
+  // past the watch debounce, then assert no "applied changes" popup appeared:
+  // a client's own save must not surface as an incoming update.
+  await page.waitForTimeout(5000);
+  await expect(page.getByText('Applied changes from disk')).toHaveCount(0);
+});

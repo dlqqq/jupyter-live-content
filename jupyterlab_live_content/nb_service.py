@@ -59,6 +59,33 @@ def _iso(value: Any) -> Optional[str]:
     return isoformat() if callable(isoformat) else str(value)
 
 
+async def read_file_revision(
+    contents_manager: Any, path: str
+) -> Dict[str, Optional[str]]:
+    """Read just the file-revision metadata (last_modified / hash) for any file.
+
+    Best-effort: returns whatever the ContentsManager provides. Used so a client
+    can recognize its own save (matching hash) and skip a needless reload.
+    """
+    revision: Dict[str, Optional[str]] = {
+        "last_modified": None,
+        "hash": None,
+        "hash_algorithm": None,
+    }
+    try:
+        model = await ensure_async(
+            contents_manager.get(path, content=False, require_hash=True)
+        )
+    except TypeError:
+        model = await ensure_async(contents_manager.get(path, content=False))
+    except Exception:  # noqa: BLE001 - metadata is best-effort, never fatal
+        return revision
+    revision["last_modified"] = _iso(model.get("last_modified"))
+    revision["hash"] = model.get("hash")
+    revision["hash_algorithm"] = model.get("hash_algorithm")
+    return revision
+
+
 def build_manifest(nbcontent: Dict[str, Any], file_meta: Dict[str, Optional[str]]):
     return nb_hash.build_manifest(
         nbcontent,
