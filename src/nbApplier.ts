@@ -117,6 +117,7 @@ export class NotebookLiveSync {
     // has already written the new content to disk, so a disk checkpoint captures
     // the post-change state, not the state we want to roll back to.
     const snapshot = this._captureSnapshot();
+    const wasDirty = this._widget.context.model.dirty;
 
     this._applying = true;
     try {
@@ -171,6 +172,14 @@ export class NotebookLiveSync {
       delete this._base[id];
     }
     this._nbMetaHash = msg.nb_meta_hash;
+
+    // Applying mutated the shared model, which flips the document to dirty. But
+    // we advanced the recorded revision to match disk, so the model now matches
+    // disk: a clean document must stay clean. If it was already dirty (the user
+    // has unsaved edits elsewhere), leave it dirty.
+    if (!wasDirty) {
+      this._widget.context.model.dirty = false;
+    }
 
     this._advanceRecordedRevision(msg);
     this._notifyApplied(snapshot);

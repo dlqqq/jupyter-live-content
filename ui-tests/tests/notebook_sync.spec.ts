@@ -204,3 +204,51 @@ test('out-of-band change applies to a cell that the kernel has executed', async 
 
   await expect(editor.nth(1)).toContainText('b = 2', { timeout: 15000 });
 });
+
+test('an out-of-band change to a clean notebook leaves it not dirty', async ({
+  page,
+  tmpPath
+}) => {
+  const nbPath = `${tmpPath}/${NB_NAME}`;
+  await page.contents.uploadContent(nb2('a = 1', 'b = 1'), 'text', nbPath);
+  await page.goto();
+  await page.notebook.openByPath(nbPath);
+
+  const editor = page.locator('.jp-Notebook .cm-content');
+  await expect(editor.nth(1)).toContainText('b = 1');
+
+  // Establish a clean baseline. Opening a notebook starts a kernel, which adds
+  // language_info metadata and dirties the document; save until it settles.
+  for (let i = 0; i < 6; i++) {
+    if ((await page.locator('.jp-mod-dirty').count()) === 0) {
+      break;
+    }
+    await page.notebook.save();
+    await page.waitForTimeout(500);
+  }
+  await expect(page.locator('.jp-mod-dirty')).toHaveCount(0);
+
+  // Read the exact on-disk content out-of-band, change only cell 2's source,
+  // and write it back out-of-band (preserving all metadata, so the kernel does
+  // not re-add anything and re-dirty the document).
+  const settings = await page.evaluate(() => {
+    const s = (window as any).jupyterapp.serviceManager.serverSettings;
+    return { baseUrl: s.baseUrl as string, token: s.token as string };
+  });
+  const url = `${settings.baseUrl}api/contents/${nbPath}`;
+  const headers = { Authorization: `token ${settings.token}` };
+  const model = await (
+    await page.request.get(`${url}?content=1&type=notebook`, { headers })
+  ).json();
+  model.content.cells[1].source = 'b = 2';
+  await page.request.put(url, {
+    headers,
+    data: { type: 'notebook', format: 'json', content: model.content }
+  });
+
+  await expect(editor.nth(1)).toContainText('b = 2', { timeout: 15000 });
+
+  // The model now matches disk, so applying an out-of-band change to a clean
+  // document must not make it dirty.
+  await expect(page.locator('.jp-mod-dirty')).toHaveCount(0);
+});
