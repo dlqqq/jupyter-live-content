@@ -22,6 +22,7 @@ A structurally important fact: even a single-cell edit triggers a **full re-read
 All measurements use a realistic synthetic notebook generator (mixed code/markdown cells with plausible content, `nbformat` 4.5 cell ids, varied length, occasional tags/metadata), sweeping notebook size in 1000-cell increments. One random single-cell out-of-band edit per repeat; 9 repeats per size; medians reported.
 
 **Event-loop lag probe.** A heartbeat coroutine `await`s a fixed-interval `asyncio.sleep(tick)` and records how late each wakeup arrives. Any lateness means the loop could not run a ready callback on time = the loop was blocked (whether by on-loop computation or by GIL contention from a worker thread). Each busy interval `[expected_wake, actual_wake]` is attributed to whichever resolve stage was running, by time-overlap. This correctly separates:
+
 - offloaded stages (read): many small gaps from GIL contention while the worker thread holds the GIL, and
 - on-loop stages (`build_manifest`, diff): one long gap covering the whole computation.
 
@@ -29,25 +30,25 @@ All measurements use a realistic synthetic notebook generator (mixed code/markdo
 
 **Noise-floor characterization.** The sub-millisecond `asyncio.sleep` probe has a measurable noise floor from OS timer/scheduler granularity. Measured against a fully idle loop:
 
-| tick | idle-loop "blocked" (noise floor) |
-|-----:|----------------------------------:|
-| 500us | ~57% |
-| 2000us | ~4% |
-| 5000us | ~2% |
+|   tick | idle-loop "blocked" (noise floor) |
+| -----: | --------------------------------: |
+|  500us |                              ~57% |
+| 2000us |                               ~4% |
+| 5000us |                               ~2% |
 
-All results below use a **2ms tick** (≈4% noise floor). The noise floor barely affects the *relative* attribution (there are almost no idle gaps mid-resolve to accumulate noise), but it does inflate the absolute "blocked % of wall", so it must be subtracted when interpreting that column.
+All results below use a **2ms tick** (≈4% noise floor). The noise floor barely affects the _relative_ attribution (there are almost no idle gaps mid-resolve to accumulate noise), but it does inflate the absolute "blocked % of wall", so it must be subtracted when interpreting that column.
 
 ## Findings
 
 ### 1. Loop-blocking attribution (2ms tick)
 
-| cells | wall ms | loop-blocked ms | blk/wall % | read | build_manifest | diff+msg | **read % of blocking** |
-|------:|--------:|----------------:|-----------:|-----:|---------------:|---------:|-----------------------:|
-| 1000  | 39.1  | 29.1  | 74% | 22.6  | 5.5  | 0.7 | **78.9%** |
-| 2000  | 77.9  | 61.9  | 79% | 47.3  | 12.8 | 1.4 | **77.0%** |
-| 4000  | 157.2 | 127.2 | 81% | 96.0  | 27.5 | 3.2 | **75.9%** |
-| 8000  | 380.0 | 323.7 | 85% | 258.2 | 57.6 | 7.1 | **80.0%** |
-| 10000 | 467.4 | 397.4 | 85% | 315.4 | 71.4 | 9.1 | **79.7%** |
+| cells | wall ms | loop-blocked ms | blk/wall % |  read | build_manifest | diff+msg | **read % of blocking** |
+| ----: | ------: | --------------: | ---------: | ----: | -------------: | -------: | ---------------------: |
+|  1000 |    39.1 |            29.1 |        74% |  22.6 |            5.5 |      0.7 |              **78.9%** |
+|  2000 |    77.9 |            61.9 |        79% |  47.3 |           12.8 |      1.4 |              **77.0%** |
+|  4000 |   157.2 |           127.2 |        81% |  96.0 |           27.5 |      3.2 |              **75.9%** |
+|  8000 |   380.0 |           323.7 |        85% | 258.2 |           57.6 |      7.1 |              **80.0%** |
+| 10000 |   467.4 |           397.4 |        85% | 315.4 |           71.4 |      9.1 |              **79.7%** |
 
 The read's ~80% share is stable across probe resolutions (500us tick → 79-82%; 2ms tick → 76-80%), which gives confidence in the relative number.
 

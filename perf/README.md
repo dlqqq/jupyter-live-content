@@ -21,6 +21,7 @@ peak + RSS, max backend threads, and max backend CPU. Outputs a table, CSV,
 JSON, and an interactive Plotly HTML chart under `results/`.
 
 ### Measurement notes
+
 - **Time and memory are measured in separate passes.** `tracemalloc` traces
   every allocation and inflates wall time ~15x for parse/hash-heavy work, so it
   is never active while timing (see `instrument.py`).
@@ -48,10 +49,11 @@ that runs the offloaded read.
 ```
 
 ### Measurement notes
+
 - The sub-millisecond `asyncio.sleep` probe has a noise floor from OS timer
   granularity: ~57% at a 500us tick, ~4% at 2ms, ~2% at 5ms (measured against an
   idle loop). Use `--tick-us 2000` and subtract the floor when reading the
-  absolute "blocked % of wall"; the *relative* stage attribution is tick-stable.
+  absolute "blocked % of wall"; the _relative_ stage attribution is tick-stable.
 
 ## Findings
 
@@ -63,5 +65,6 @@ holds the GIL. Everything is linear in cell count (~40ms/1000 cells) with no
 cliff in the 1k-10k range.
 
 ## Planned
+
 - Stage 2: multi-edit fan-out (200/400/600/800/1000 edits per size).
 - WebSocket fan-out across K clients.
