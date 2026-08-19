@@ -131,3 +131,76 @@ test('the revert button restores a notebook to its pre-change state', async ({
   await expect(editor.nth(1)).toContainText('x = 1', { timeout: 15000 });
   await expect(editor.nth(1)).not.toContainText('x = 424242');
 });
+
+function nb2(c1: string, c2: string): string {
+  return JSON.stringify({
+    cells: [
+      {
+        id: 'cell-one',
+        cell_type: 'code',
+        source: c1,
+        metadata: {},
+        outputs: [],
+        execution_count: null
+      },
+      {
+        id: 'cell-two',
+        cell_type: 'code',
+        source: c2,
+        metadata: {},
+        outputs: [],
+        execution_count: null
+      }
+    ],
+    metadata: { kernelspec: { name: 'python3', display_name: 'Python 3' } },
+    nbformat: 4,
+    nbformat_minor: 5
+  });
+}
+
+test('out-of-band change to an untouched cell applies while another cell is dirty', async ({
+  page,
+  tmpPath
+}) => {
+  const nbPath = `${tmpPath}/${NB_NAME}`;
+  await page.contents.uploadContent(nb2('a = 1', 'b = 1'), 'text', nbPath);
+  await page.goto();
+  await page.notebook.openByPath(nbPath);
+
+  const editor = page.locator('.jp-Notebook .cm-content');
+  await expect(editor.nth(0)).toContainText('a = 1');
+  await expect(editor.nth(1)).toContainText('b = 1');
+
+  // Make cell 1 dirty via a local UI edit (do not save).
+  await page.notebook.enterCellEditingMode(0);
+  await page.keyboard.type('  # local edit');
+
+  // Out-of-band change to cell 2 only; cell 1 on disk keeps its saved value.
+  await page.contents.uploadContent(nb2('a = 1', 'b = 2'), 'text', nbPath);
+
+  // Cell 2 updates in place even though cell 1 is dirty.
+  await expect(editor.nth(1)).toContainText('b = 2', { timeout: 15000 });
+  await expect(editor.nth(0)).toContainText('# local edit');
+});
+
+test('out-of-band change applies to a cell that the kernel has executed', async ({
+  page,
+  tmpPath
+}) => {
+  const nbPath = `${tmpPath}/${NB_NAME}`;
+  await page.contents.uploadContent(nb2('a = 1', 'b = 1'), 'text', nbPath);
+  await page.goto();
+  await page.notebook.openByPath(nbPath);
+
+  const editor = page.locator('.jp-Notebook .cm-content');
+  await expect(editor.nth(1)).toContainText('b = 1');
+
+  // Run the notebook. This starts a kernel and gives each cell an execution
+  // count / outputs / execution-state changes. The user did NOT edit any cell
+  // source, so an out-of-band source change must still apply.
+  await page.notebook.run();
+
+  await page.contents.uploadContent(nb2('a = 1', 'b = 2'), 'text', nbPath);
+
+  await expect(editor.nth(1)).toContainText('b = 2', { timeout: 15000 });
+});

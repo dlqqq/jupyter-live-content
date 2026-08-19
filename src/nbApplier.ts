@@ -1,11 +1,23 @@
 import { IDocumentWidget } from '@jupyterlab/docregistry';
 import { Notification } from '@jupyterlab/apputils';
-import type { ISharedCell, ISharedNotebook } from '@jupyter/ydoc';
+import type { CellChange, ISharedCell, ISharedNotebook } from '@jupyter/ydoc';
 
 import { planReconcile, IReconcileInput } from './reconcile';
 import { ICellHashes } from './reconcile';
 import { clientHasRevision } from './revision';
 import { INbManifest, INbUpdate } from './tokens';
+
+/**
+ * Cell metadata keys that are local view state or kernel-written timing, not
+ * user content. Mirrors the server-side exclusions in `nb_hash.py`. A change
+ * confined to these must not mark a cell dirty.
+ */
+const VOLATILE_META_KEYS = new Set([
+  'collapsed',
+  'scrolled',
+  'execution',
+  'jupyter'
+]);
 
 interface INbCellSnapshot {
   cell_type: string;
@@ -310,11 +322,32 @@ export class NotebookLiveSync {
     }
   }
 
-  private _onCellChanged(cell: ISharedCell): void {
+  private _onCellChanged(cell: ISharedCell, change: CellChange): void {
     if (this._applying) {
       return;
     }
-    this._dirty.add(cell.getId());
+    // Only user edits should mark a cell dirty. Kernel activity (outputs,
+    // execution count, execution state, and the `metadata.execution` timing it
+    // writes) must NOT: those are not user edits, we never sync them, and
+    // treating them as dirty would wrongly block out-of-band updates to a cell
+    // the user merely ran.
+    if (this._isUserEdit(change)) {
+      this._dirty.add(cell.getId());
+    }
+  }
+
+  private _isUserEdit(change: CellChange): boolean {
+    if (change.sourceChange || change.attachmentsChange) {
+      return true;
+    }
+    if (change.metadataChange) {
+      for (const key of change.metadataChange.keys()) {
+        if (!VOLATILE_META_KEYS.has(key)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   private _onModelChanged(): void {
