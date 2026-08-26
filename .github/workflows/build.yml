@@ -99,9 +99,26 @@ jobs:
         python -m jupyterlab.browser_check --no-browser-test
 
   integration-tests:
-    name: Integration tests
+    name: E2E tests / ${{ matrix.name }}
     needs: build
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            slug: default
+            rtc_package: ''
+            rtc_env: ''
+          - name: Verify disabled in RTC (+JCollab)
+            slug: jcollab
+            rtc_package: jupyter-collaboration
+            rtc_env: '1'
+          - name: Verify disabled in RTC (+JSD)
+            slug: jsd
+            rtc_package: jupyter-server-documents
+            rtc_env: '1'
 
     env:
       PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/pw-browsers
@@ -118,10 +135,10 @@ jobs:
       with:
         name: extension-artifacts
 
-    - name: Install the extension
+    - name: Install the extension (and any RTC provider under test)
       run: |
         set -eux
-        python -m pip install "jupyterlab>=4.0.0,<5" jupyterlab_live_content*.whl
+        python -m pip install "jupyterlab>=4.0.0,<5" jupyterlab_live_content*.whl ${{ matrix.rtc_package }}
 
     - name: Install dependencies
       working-directory: ui-tests
@@ -145,6 +162,10 @@ jobs:
 
     - name: Execute integration tests
       working-directory: ui-tests
+      # LIVE_CONTENT_RTC selects the suite: ./rtc (verify-disabled) when an RTC
+      # provider is installed, ./tests (the default suite) otherwise.
+      env:
+        LIVE_CONTENT_RTC: ${{ matrix.rtc_env }}
       run: |
         jlpm playwright test
 
@@ -152,7 +173,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: jupyterlab_live_content-playwright-tests
+        name: jupyterlab_live_content-playwright-tests-${{ matrix.slug }}
         path: |
           ui-tests/test-results
           ui-tests/playwright-report

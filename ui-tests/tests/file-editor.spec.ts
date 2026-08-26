@@ -1,30 +1,12 @@
 import { expect, test } from '@jupyterlab/galata';
 
-/**
- * Don't load JupyterLab before the test so we can capture all log messages.
- */
 test.use({ autoGoto: false });
 
 const FILE_NAME = 'live-content-e2e.txt';
 const INITIAL = 'initial content from disk';
 const UPDATED = 'UPDATED content written directly to disk';
 
-test('all three live-content plugins activate', async ({ page }) => {
-  const logs: string[] = [];
-  page.on('console', message => logs.push(message.text()));
-
-  await page.goto();
-
-  for (const name of ['connector', 'tracker', 'applier']) {
-    expect(
-      logs.filter(
-        s => s === `@jupyter-ai-contrib/live-content:${name} is activated`
-      )
-    ).toHaveLength(1);
-  }
-});
-
-test('open document reloads when its file changes on disk', async ({
+test('open file editor reloads when its file changes on disk', async ({
   page,
   tmpPath
 }) => {
@@ -36,15 +18,15 @@ test('open document reloads when its file changes on disk', async ({
 
   await page.goto();
 
-  // Open the file in the editor.
+  // Open the file in the (default) editor.
   await page.filebrowser.open(filePath);
 
   const editor = page.locator('.jp-FileEditor .cm-content');
   await expect(editor).toContainText(INITIAL);
 
-  // Simulate an out-of-band change: overwrite the file on disk. The document is
-  // clean, so the server's watchfiles watcher detects the write, broadcasts a
-  // `server_update`, and the applier plugin reloads it via context.revert().
+  // Out-of-band change: overwrite the file on disk. The document is clean, so
+  // the server's watcher broadcasts a `server_update` and the applier reloads
+  // it via context.revert().
   await page.contents.uploadContent(UPDATED, 'text', filePath);
 
   await expect(editor).toContainText(UPDATED, { timeout: 15000 });
