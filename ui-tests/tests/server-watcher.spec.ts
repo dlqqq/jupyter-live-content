@@ -134,3 +134,71 @@ test("closing the tab stops watching all of that client's files", async ({
 
   await expect.poll(probeWatchedUnder).toEqual([]);
 });
+
+test('the watch set persists until the last client with the files open closes', async ({
+  page,
+  browser,
+  request,
+  tmpPath
+}) => {
+  const { l1, l2, l3, f1, f2, f3 } = await seedNested(page, tmpPath);
+
+  // Client A: the galata page.
+  await page.goto();
+  await page.filebrowser.open(f1);
+  await page.filebrowser.open(f2);
+  await page.filebrowser.open(f3);
+
+  // An authenticated probe URL and a raw lab URL for the second client.
+  const { probeUrl, labUrl } = await page.evaluate(() => {
+    const el = document.getElementById('jupyter-config-data');
+    const cfg = el && el.textContent ? JSON.parse(el.textContent) : {};
+    const base = cfg.baseUrl || '/';
+    const q = cfg.token ? '?token=' + encodeURIComponent(cfg.token) : '';
+    return {
+      probeUrl: location.origin + base + 'api/live-content/_test/watched' + q,
+      labUrl: location.origin + base + 'lab' + q
+    };
+  });
+
+  const probeWatchedUnder = async (): Promise<string[]> => {
+    const res = await request.get(probeUrl);
+    const body = await res.json();
+    return ((body.watched ?? []) as string[])
+      .filter(d => d === tmpPath || d.startsWith(tmpPath + '/'))
+      .sort();
+  };
+
+  // Client B: a second, independent web client (separate context => separate
+  // WebSocket) opening the same three documents.
+  const clientB = await browser.newContext();
+  const pageB = await clientB.newPage();
+  await pageB.goto(labUrl);
+  await pageB.waitForFunction(() =>
+    (window as any).jupyterapp?.commands?.hasCommand('docmanager:open')
+  );
+  await pageB.evaluate(
+    async (paths: string[]) => {
+      const app = (window as any).jupyterapp;
+      for (const p of paths) {
+        await app.commands.execute('docmanager:open', { path: p });
+      }
+    },
+    [f1, f2, f3]
+  );
+
+  // Both clients have all three documents open.
+  await expect.poll(probeWatchedUnder).toEqual([l1, l2, l3]);
+
+  // Client B disconnects. Client A still has them open, so the watch set must
+  // stay exactly the same.
+  await clientB.close();
+  await expect.poll(probeWatchedUnder).toEqual([l1, l2, l3]);
+  // Give the server time to process B's disconnect and confirm no drift.
+  await page.waitForTimeout(1500);
+  expect(await probeWatchedUnder()).toEqual([l1, l2, l3]);
+
+  // Client A also disconnects: now nothing is watched.
+  await page.close();
+  await expect.poll(probeWatchedUnder).toEqual([]);
+});
